@@ -1,0 +1,42 @@
+[package]
+name = "meu-player"
+version = "0.3.0"
+edition = "2021"
+description = "Player de áudio estilo foobar2000 com plugins — Rust (desktop + iOS)"
+license = "MIT"
+build = "build.rs"
+
+[features]
+# Força a interface/código de celular no desktop (útil para testar o layout sem iPhone).
+mobile = []
+
+[dependencies]
+egui = "0.31"
+egui_extras = "0.31"
+symphonia = { version = "0.5.4", features = ["all"] }
+cpal = "0.15"
+ringbuf = "0.4"
+lofty = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "5"
+ureq = { version = "2", features = ["json"] }
+md5 = "0.8"
+walkdir = "2"
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.15"
+discord-rich-presence = "0.2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wgpu"] }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4

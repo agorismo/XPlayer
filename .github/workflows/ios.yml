@@ -1,0 +1,34 @@
+name: Gerar IPA (iOS)
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["v*"]
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compilar (release, iPhone/iPad)
+        run: cargo build --release --target aarch64-apple-ios
+
+      - name: Montar o .ipa (sem assinatura)
+        run: |
+          rm -rf build && mkdir -p build/Payload/MeuPlayer.app
+          cp target/aarch64-apple-ios/release/meu-player build/Payload/MeuPlayer.app/MeuPlayer
+          cp ios/Info.plist build/Payload/MeuPlayer.app/Info.plist
+          (cd build && zip -qry ../MeuPlayer.ipa Payload)
+          ls -la MeuPlayer.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeuPlayer-ipa
+          path: MeuPlayer.ipa
