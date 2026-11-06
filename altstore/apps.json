@@ -15,7 +15,22 @@
       "iconURL": "https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/icon.png",
       "tintColor": "4AA3FF",
       "screenshotURLs": [],
-      "versions": []
+      "versions": [
+        {
+          "version": "0.4.0",
+          "buildVersion": "4",
+          "date": "2026-11-06",
+          "downloadURL": "https://github.com/agorismo/meu-player/releases/download/v0.4.0-b4/MeuPlayer.ipa",
+          "localizedDescription": "Atualização do Meu Player.",
+          "size": 6104154,
+          "minOSVersion": "14.0"
+        }
+      ],
+      "version": "0.4.0",
+      "versionDate": "2026-11-06",
+      "versionDescription": "Atualização do Meu Player.",
+      "downloadURL": "https://github.com/agorismo/meu-player/releases/download/v0.4.0-b4/MeuPlayer.ipa",
+      "size": 6104154
     }
   ],
   "news": []
