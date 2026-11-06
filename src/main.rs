@@ -9,6 +9,7 @@ mod dsp;
 mod meta;
 mod platform;
 mod playlist;
+mod remote;
 mod plugins;
 
 fn main() -> eframe::Result<()> {

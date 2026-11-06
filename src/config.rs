@@ -30,9 +30,35 @@ pub struct PluginCfg {
     pub settings: HashMap<String, Value>,
 }
 
+/// Conexão com a biblioteca de um PC (cliente).
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct RemoteCfg {
+    pub address: String,
+    pub code: String,
+}
+
+/// Compartilhamento de pasta (desktop).
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct ShareCfg {
+    pub folder: String,
+    pub port: u16,
+    pub code: String,
+    pub autostart: bool,
+}
+
+impl Default for ShareCfg {
+    fn default() -> Self {
+        Self { folder: String::new(), port: crate::remote::DEFAULT_PORT, code: String::new(), autostart: false }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
+    pub remote: RemoteCfg,
+    pub share: ShareCfg,
     pub plugins: HashMap<String, PluginCfg>,
     pub cover: CoverSettings,
     /// Capas escolhidas manualmente: "track|<caminho>" ou "album|<artista>|<álbum>" -> arquivo de imagem.
@@ -50,6 +76,9 @@ impl Config {
             .unwrap_or_default();
         c.path = path;
         c.cover.normalize();
+        if c.share.code.is_empty() {
+            c.share.code = crate::remote::random_code();
+        }
         c
     }
 

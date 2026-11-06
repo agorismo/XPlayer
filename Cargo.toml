@@ -1,6 +1,6 @@
 [package]
 name = "meu-player"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Player de áudio estilo foobar2000 com plugins — Rust (desktop + iOS)"
 license = "MIT"

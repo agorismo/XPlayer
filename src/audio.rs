@@ -16,7 +16,7 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error as SymErr;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
@@ -237,8 +237,13 @@ struct Dec {
 }
 
 fn open(path: &str, out_rate: u32, out_ch: usize, ev: &Sender<AudioEvent>) -> Result<Dec, String> {
-    let file = File::open(path).map_err(|e| format!("{path}: {e}"))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let source: Box<dyn MediaSource> = if crate::remote::is_remote(path) {
+        let url = crate::remote::url_for(path, "file").ok_or("sem conexão com o PC — abra \"Biblioteca do PC\" e conecte")?;
+        Box::new(crate::remote::RangeReader::open(&url).map_err(|e| format!("PC: {e}"))?)
+    } else {
+        Box::new(File::open(path).map_err(|e| format!("{path}: {e}"))?)
+    };
+    let mss = MediaSourceStream::new(source, Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
@@ -602,5 +607,52 @@ mod tests {
         decode_step(&mut d2, &sh, 48000, 2, &tx);
         let low = d2.pending.iter().fold(0f32, |p, s| p.max(s.abs()));
         assert!((low / base - 0.5012).abs() < 0.02, "{low} / {base}");
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+
+    /// Toca (decodifica) uma faixa pela rede, como o app faz com a biblioteca do PC.
+    #[test]
+    fn decodes_over_http_from_shared_folder() {
+        let _g = crate::remote::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let media = "/tmp/claude-0/-home-claude/4d4526df-e6cf-5301-a01d-05b1322b6bac/scratchpad/media";
+        if !Path::new(media).join("plain.flac").exists() {
+            return;
+        }
+        let share = crate::remote::start(std::path::PathBuf::from(media), 0, "XYZ".into()).unwrap();
+        crate::remote::set_conn(Some(crate::remote::Conn { addr: format!("127.0.0.1:{}", share.port), code: "XYZ".into() }));
+        let (tx, _rx) = mpsc::channel();
+        let sh = Shared {
+            playing: AtomicBool::new(true),
+            volume: AtomicU32::new(1.0f32.to_bits()),
+            rg_gain: AtomicU32::new(1.0f32.to_bits()),
+            pos_frames: AtomicU64::new(0),
+            base_frames: AtomicU64::new(0),
+            flush_gen: AtomicU32::new(0),
+            ack_gen: AtomicU32::new(0),
+            buffered: AtomicI64::new(0),
+            eq: Mutex::new(EqParams::default()),
+            eq_ver: AtomicU32::new(1),
+        };
+        for (f, secs) in [("pc://plain.flac", 2.0), ("pc://emb.mp3", 3.0)] {
+            let mut d = open(f, 48000, 2, &tx).expect("abrir pela rede");
+            let mut frames = 0;
+            while !d.eof {
+                decode_step(&mut d, &sh, 48000, 2, &tx);
+                frames += d.pending.len() / 2;
+                d.pending.clear();
+            }
+            assert!((frames as f64 / 48000.0 - secs).abs() < 0.15, "{f}: {frames}");
+        }
+        // seek pela rede
+        let mut d = open("pc://emb.mp3", 44100, 2, &tx).unwrap();
+        let s = d.format.seek(SeekMode::Accurate, SeekTo::Time { time: Time { seconds: 2, frac: 0.0 }, track_id: Some(d.track_id) }).unwrap();
+        let actual = secs(d.time_base.unwrap().calc_time(s.actual_ts));
+        assert!((actual - 2.0).abs() < 0.1);
+        share.stop();
+        crate::remote::set_conn(None);
     }
 }

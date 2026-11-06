@@ -2,7 +2,10 @@
 
 use crate::audio::{AudioEvent, Engine};
 use crate::config::{self, Config};
-use crate::cover::{self, CoverQuery, CoverSource};
+use crate::cover::{self, CoverQuery};
+use crate::remote;
+#[cfg(mobile_ui)]
+use crate::cover::CoverSource;
 use crate::dsp::{self, EqParams};
 use crate::meta;
 use crate::platform;
@@ -44,12 +47,16 @@ impl CoverTarget {
 enum Dlg {
     Add(Vec<String>),
     Note(String),
+    Library(Result<(Vec<Track>, bool), String>),
+    #[allow(dead_code)]
+    ShareFolder(PathBuf),
     CoverFile { target: CoverTarget, album: bool, path: PathBuf },
     CoversDir(PathBuf),
     Fallback(PathBuf),
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 enum PickMode {
     Cover { target: CoverTarget, album: bool },
     Fallback,
@@ -106,6 +113,20 @@ pub struct App {
     wipe_armed: bool,
     narrow: bool,
     insets: [f32; 4],
+    show_remote: bool,
+    remote_addr: String,
+    remote_code: String,
+    remote_status: String,
+    remote_lib: Vec<Track>,
+    remote_groups: Vec<(String, Vec<usize>)>,
+    remote_search: String,
+    show_share: bool,
+    share: Option<remote::Share>,
+    share_msg: String,
+    share_folder: String,
+    share_port: u16,
+    share_code: String,
+    share_auto: bool,
     image_picker: Option<(PickMode, Vec<PathBuf>)>,
     confirm_close: Option<usize>,
     seeking: bool,
@@ -237,6 +258,13 @@ impl App {
         plugins.start_enabled();
 
         platform::setup_audio_session();
+        let (r_addr, r_code, s_cfg) = {
+            let c = cfg.lock().unwrap();
+            (c.remote.address.clone(), c.remote.code.clone(), c.share.clone())
+        };
+        if !r_addr.is_empty() && !r_code.is_empty() {
+            remote::set_conn(Some(remote::Conn { addr: r_addr.clone(), code: r_code.clone() }));
+        }
         let (engine, ev_rx, engine_err) = match Engine::new() {
             Ok((e, rx)) => (Some(e), Some(rx), None),
             Err(e) => (None, None, Some(e)),
@@ -276,6 +304,20 @@ impl App {
             wipe_armed: false,
             narrow: false,
             insets: [0.0; 4],
+            show_remote: false,
+            remote_addr: String::new(),
+            remote_code: String::new(),
+            remote_status: String::new(),
+            remote_lib: Vec::new(),
+            remote_groups: Vec::new(),
+            remote_search: String::new(),
+            show_share: false,
+            share: None,
+            share_msg: String::new(),
+            share_folder: String::new(),
+            share_port: remote::DEFAULT_PORT,
+            share_code: String::new(),
+            share_auto: false,
             image_picker: None,
             confirm_close: None,
             seeking: false,
@@ -306,6 +348,16 @@ impl App {
         app.mobile_init();
         if app.lists.is_empty() {
             app.lists.push(ListData { name: "Playlist 1".into(), ..Default::default() });
+        }
+        app.remote_addr = r_addr;
+        app.remote_code = r_code;
+        app.share_folder = s_cfg.folder.clone();
+        app.share_port = s_cfg.port;
+        app.share_code = s_cfg.code.clone();
+        app.share_auto = s_cfg.autostart;
+        #[cfg(not(mobile_ui))]
+        if s_cfg.autostart && !s_cfg.folder.is_empty() {
+            app.start_share();
         }
         app.apply_audio();
         if app.now.is_some() {
@@ -866,6 +918,11 @@ impl App {
             match d {
                 Dlg::Add(p) => self.add_tracks(p),
                 Dlg::Note(m) => self.toast(m),
+                Dlg::Library(r) => self.on_library(r),
+                Dlg::ShareFolder(p) => {
+                    self.share_folder = p.to_string_lossy().to_string();
+                    self.save_share_cfg();
+                }
                 Dlg::CoverFile { target, album, path } => self.set_cover(target, album, path),
                 Dlg::CoversDir(p) => {
                     self.cfg.lock().unwrap().cover.covers_dir = p.to_string_lossy().to_string();
@@ -1176,9 +1233,20 @@ impl App {
                             self.show_plugins = true;
                             ui.close_menu();
                         }
+                        if ui.button("Biblioteca do PC").clicked() {
+                            self.open_remote();
+                            ui.close_menu();
+                        }
                     });
                 } else {
-                    ui.add_space((ui.available_width() - 290.0).max(8.0));
+                    ui.add_space((ui.available_width() - if cfg!(mobile_ui) { 400.0 } else { 520.0 }).max(8.0));
+                    if ui.button("Biblioteca do PC").clicked() {
+                        self.open_remote();
+                    }
+                    #[cfg(not(mobile_ui))]
+                    if ui.button("Compartilhar").on_hover_text("Compartilha uma pasta deste PC com o app do iPhone").clicked() {
+                        self.show_share = true;
+                    }
                     if ui.button("Capas").clicked() {
                         self.show_cover = true;
                     }
@@ -1557,7 +1625,7 @@ impl App {
                             }
                             ui.separator();
                             #[cfg(not(mobile_ui))]
-                            if ui.button("Mostrar na pasta").clicked() {
+                            if !remote::is_remote(&t.path) && ui.button("Mostrar na pasta").clicked() {
                                 act = Some(RowAction::OpenFolder(t.path.clone()));
                                 ui.close_menu();
                             }
@@ -1686,6 +1754,9 @@ impl App {
         self.win_plugins(ctx);
         self.win_audio(ctx);
         self.win_cover(ctx);
+        self.win_remote(ctx);
+        #[cfg(not(mobile_ui))]
+        self.win_share(ctx);
         self.win_confirm(ctx);
     }
 
@@ -2024,5 +2095,252 @@ impl App {
         if !open {
             self.wipe_armed = false;
         }
+    }
+}
+
+// ====================================================================== biblioteca do PC (rede local)
+
+impl App {
+    fn open_remote(&mut self) {
+        self.show_remote = true;
+        if self.remote_lib.is_empty() && !self.remote_addr.trim().is_empty() && !self.remote_code.trim().is_empty() {
+            self.connect_remote();
+        }
+    }
+
+    fn connect_remote(&mut self) {
+        let addr = remote::norm_addr(&self.remote_addr);
+        let code = self.remote_code.trim().to_uppercase();
+        if addr.is_empty() || code.is_empty() {
+            self.remote_status = "Informe o endereço e o código mostrados no PC.".into();
+            return;
+        }
+        self.remote_addr = addr.clone();
+        self.remote_code = code.clone();
+        {
+            let mut c = self.cfg.lock().unwrap();
+            c.remote.address = addr.clone();
+            c.remote.code = code.clone();
+            c.save();
+        }
+        remote::set_conn(Some(remote::Conn { addr: addr.clone(), code: code.clone() }));
+        self.remote_status = "Conectando…".into();
+        let (tx, ctx) = (self.dlg_tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Dlg::Library(remote::fetch_library(&addr, &code)));
+            ctx.request_repaint();
+        });
+    }
+
+    fn on_library(&mut self, r: Result<(Vec<Track>, bool), String>) {
+        match r {
+            Err(e) => self.remote_status = format!("Erro: {e}"),
+            Ok((tracks, scanning)) => {
+                let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+                for (i, t) in tracks.iter().enumerate() {
+                    let rel = t.path.strip_prefix(remote::PREFIX).unwrap_or(&t.path);
+                    let dir = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+                    groups.entry(dir).or_default().push(i);
+                }
+                let mut groups: Vec<(String, Vec<usize>)> = groups.into_iter().collect();
+                for (_, v) in groups.iter_mut() {
+                    v.sort_by(|&a, &b| {
+                        let (ta, tb) = (&tracks[a], &tracks[b]);
+                        ta.track_no.unwrap_or(0).cmp(&tb.track_no.unwrap_or(0)).then_with(|| natural_cmp(&ta.path, &tb.path))
+                    });
+                }
+                groups.sort_by(|a, b| natural_cmp(&a.0, &b.0));
+                self.remote_status = format!(
+                    "Conectado: {} músicas em {} pastas{}",
+                    tracks.len(),
+                    groups.len(),
+                    if scanning { " (o PC ainda está indexando — conecte de novo para atualizar)" } else { "" }
+                );
+                self.remote_lib = tracks;
+                self.remote_groups = groups;
+            }
+        }
+    }
+
+    fn add_remote(&mut self, idxs: &[usize]) {
+        if idxs.is_empty() {
+            return;
+        }
+        let new: Vec<Track> = idxs
+            .iter()
+            .map(|&i| {
+                let mut t = self.remote_lib[i].clone();
+                t.id = next_id();
+                t.meta_loaded = true;
+                t
+            })
+            .collect();
+        let n = new.len();
+        let first = new[0].id;
+        let view = self.view;
+        self.lists[view].tracks.extend(new);
+        self.lists[view].sort = None;
+        if self.now.is_none() {
+            self.play_id(view, first);
+        }
+        self.toast(format!("{n} faixa(s) adicionada(s) à playlist."));
+        self.dirty();
+    }
+
+    fn win_remote(&mut self, ctx: &egui::Context) {
+        if !self.show_remote {
+            return;
+        }
+        let mut open = true;
+        let mut connect = false;
+        let mut add_all = false;
+        let mut add_group: Option<usize> = None;
+        let tw = if self.narrow { 170.0 } else { 260.0 };
+        self.win(ctx, "Biblioteca do PC", 520.0).open(&mut open).show(ctx, |ui| {
+            ui.label(RichText::new("No PC: botão Compartilhar → escolher a pasta → Iniciar. O celular e o PC precisam estar na mesma rede Wi-Fi.").color(DIM));
+            egui::Grid::new("remote-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label("Endereço do PC");
+                ui.add(egui::TextEdit::singleline(&mut self.remote_addr).desired_width(tw).hint_text("192.168.0.10:7788"));
+                ui.end_row();
+                ui.label("Código");
+                ui.add(egui::TextEdit::singleline(&mut self.remote_code).desired_width(tw).hint_text("ABC123"));
+                ui.end_row();
+            });
+            if ui.button("Conectar").clicked() {
+                connect = true;
+            }
+            if !self.remote_status.is_empty() {
+                ui.label(RichText::new(&self.remote_status).color(ACCENT));
+            }
+            if !self.remote_lib.is_empty() {
+                ui.separator();
+                ui.add(egui::TextEdit::singleline(&mut self.remote_search).hint_text("Buscar pasta…").desired_width(f32::INFINITY));
+                if ui.button(format!("Adicionar tudo ({})", self.remote_lib.len())).clicked() {
+                    add_all = true;
+                }
+                let q = self.remote_search.to_lowercase();
+                let vis: Vec<usize> =
+                    (0..self.remote_groups.len()).filter(|&i| q.is_empty() || self.remote_groups[i].0.to_lowercase().contains(&q)).collect();
+                egui::ScrollArea::vertical().max_height(340.0).auto_shrink([false, true]).show_rows(ui, 36.0, vis.len(), |ui, range| {
+                    for r in range {
+                        let gi = vis[r];
+                        let (dir, idxs) = &self.remote_groups[gi];
+                        ui.horizontal(|ui| {
+                            if ui.button("+").on_hover_text("Adicionar à playlist").clicked() {
+                                add_group = Some(gi);
+                            }
+                            let name = if dir.is_empty() { "(raiz)" } else { dir.as_str() };
+                            ui.add(egui::Label::new(format!("{name}  ·  {}", idxs.len())).truncate());
+                        });
+                    }
+                });
+            }
+        });
+        if connect {
+            self.connect_remote();
+        }
+        if add_all {
+            let all: Vec<usize> = self.remote_groups.iter().flat_map(|(_, v)| v.iter().copied()).collect();
+            self.add_remote(&all);
+        }
+        if let Some(gi) = add_group {
+            let idxs = self.remote_groups[gi].1.clone();
+            self.add_remote(&idxs);
+        }
+        self.show_remote = open;
+    }
+
+    // ---------------------------------------------------------------- compartilhar (desktop)
+
+    fn save_share_cfg(&mut self) {
+        let mut c = self.cfg.lock().unwrap();
+        c.share.folder = self.share_folder.clone();
+        c.share.port = self.share_port;
+        c.share.code = self.share_code.clone();
+        c.share.autostart = self.share_auto;
+        c.save();
+    }
+
+    #[allow(dead_code)]
+    fn start_share(&mut self) {
+        self.share = None;
+        if self.share_code.trim().is_empty() {
+            self.share_code = remote::random_code();
+        }
+        self.share_code = self.share_code.trim().to_uppercase();
+        self.save_share_cfg();
+        match remote::start(PathBuf::from(self.share_folder.trim()), self.share_port, self.share_code.clone()) {
+            Ok(s) => {
+                self.share_msg.clear();
+                self.share = Some(s);
+            }
+            Err(e) => self.share_msg = format!("Erro: {e}"),
+        }
+    }
+
+    #[cfg(not(mobile_ui))]
+    fn win_share(&mut self, ctx: &egui::Context) {
+        if !self.show_share {
+            return;
+        }
+        let mut open = true;
+        let mut changed = false;
+        let mut pick = false;
+        let mut toggle = false;
+        self.win(ctx, "Compartilhar pasta com o celular", 560.0).open(&mut open).show(ctx, |ui| {
+            ui.label(RichText::new("O app do iPhone (mesma rede Wi-Fi) lista e toca as músicas desta pasta em streaming, com o código abaixo.").color(DIM));
+            egui::Grid::new("share-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label("Pasta de músicas");
+                ui.horizontal(|ui| {
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.share_folder).desired_width(260.0)).changed();
+                    if ui.button("Escolher…").clicked() {
+                        pick = true;
+                    }
+                });
+                ui.end_row();
+                ui.label("Porta");
+                changed |= ui.add(egui::DragValue::new(&mut self.share_port).range(1024..=65000)).changed();
+                ui.end_row();
+                ui.label("Código de acesso");
+                ui.horizontal(|ui| {
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.share_code).desired_width(100.0)).changed();
+                    if ui.button("Gerar novo").clicked() {
+                        self.share_code = remote::random_code();
+                        changed = true;
+                    }
+                });
+                ui.end_row();
+            });
+            changed |= ui.checkbox(&mut self.share_auto, "Iniciar o compartilhamento ao abrir o app").changed();
+            let label = if self.share.is_some() { "Parar compartilhamento" } else { "Iniciar compartilhamento" };
+            if ui.button(label).clicked() {
+                toggle = true;
+            }
+            if let Some(sh) = &self.share {
+                let (n, scanning) = sh.status();
+                let ip = remote::local_ip().unwrap_or_else(|| "IP-DO-PC".into());
+                ui.label(RichText::new(format!("Compartilhando {n} músicas{}", if scanning { " (indexando…)" } else { "" })).color(ACCENT));
+                ui.label(format!("No celular: Menu → Biblioteca do PC → endereço  {ip}:{}  e código  {}", sh.port, self.share_code));
+            }
+            if !self.share_msg.is_empty() {
+                ui.label(RichText::new(&self.share_msg).color(Color32::from_rgb(0xff, 0x8a, 0x80)));
+            }
+            ui.label(RichText::new("Na primeira vez o Windows pergunta sobre o Firewall: permita em redes privadas. A conexão é local (não vai para a internet), protegida pelo código.").small().color(DIM));
+        });
+        if pick {
+            self.spawn_dialog(|| rfd::FileDialog::new().set_title("Pasta de músicas para compartilhar").pick_folder().map(Dlg::ShareFolder));
+        }
+        if changed {
+            self.share_code = self.share_code.to_uppercase();
+            self.save_share_cfg();
+        }
+        if toggle {
+            if self.share.is_some() {
+                self.share = None;
+            } else {
+                self.start_share();
+            }
+        }
+        self.show_share = open;
     }
 }

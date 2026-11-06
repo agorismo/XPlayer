@@ -75,3 +75,16 @@ O repositório precisa ser **público** (o AltStore baixa o `.ipa` sem login).
 Ou abra no iPhone: `altstore://source?url=https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/apps.json`
 
 **Publicar uma versão nova:** suba as mudanças, depois Actions → Gerar IPA (iOS) → Run workflow (opcional: informe versão e notas). Quando terminar, o AltStore/SideStore mostra a atualização e o app é reinstalado por lá. Aumente `version` no `Cargo.toml` quando quiser um número novo (o *build* sobe sozinho a cada execução).
+
+## Biblioteca do PC no celular (streaming pela rede local)
+Dá para ligar uma pasta de músicas do PC ao app do iPhone, sem copiar nada.
+
+**No PC (app desktop):** botão **Compartilhar** → escolher a pasta → **Iniciar compartilhamento**. A janela mostra o endereço (`IP:porta`) e o **código** de acesso. Marque "iniciar ao abrir o app" se quiser deixar sempre ligado. Na primeira vez o Firewall do Windows pergunta: permita em redes **privadas**.
+
+**No iPhone:** Menu → **Biblioteca do PC** → digite o endereço e o código → **Conectar**. As músicas aparecem agrupadas por pasta; toque em **+** para adicionar uma pasta (ou "Adicionar tudo") à playlist. Elas tocam em streaming, com seek, capa e tags. O iOS pergunta a permissão "Rede local" na primeira vez: aceite.
+
+Detalhes:
+- Celular e PC na **mesma rede Wi-Fi**, com o PC ligado e o compartilhamento iniciado. Se o IP do PC mudar, conecte de novo (as playlists continuam valendo).
+- A conexão é local e protegida pelo código, mas **não é criptografada** (HTTP); não exponha a porta na internet.
+- Só áudio e imagens da pasta escolhida são servidos (nunca outros arquivos) e não é possível sair da pasta.
+- Também funciona de um app desktop para outro.

@@ -188,7 +188,11 @@ pub fn resolve(q: &CoverQuery, s: &CoverSettings, custom: &HashMap<String, Strin
                     .filter_map(|k| custom.get(&k))
                     .find_map(|f| read_image(Path::new(f)).map(|b| (b, "Capa escolhida por você".to_string())))
             }
+            CoverSource::Embedded if crate::remote::is_remote(&q.path) => {
+                crate::remote::fetch_cover(&q.path).map(|b| (b, "Capa do PC".to_string()))
+            }
             CoverSource::Embedded => crate::meta::embedded_cover(&q.path).map(|b| (b, "Capa embutida".to_string())),
+            CoverSource::Folder if crate::remote::is_remote(&q.path) => None,
             CoverSource::Folder => find_in_folder(&q.path, &s.folder_names).and_then(|p| {
                 let name = p.file_name()?.to_string_lossy().to_string();
                 read_image(&p).map(|b| (b, format!("Pasta: {name}")))
