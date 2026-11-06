@@ -1,0 +1,22 @@
+{
+  "name": "Meu Player",
+  "identifier": "com.meuplayer.source",
+  "subtitle": "Player de áudio estilo foobar2000",
+  "description": "Fonte do AltStore/SideStore para o Meu Player.",
+  "iconURL": "https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/icon.png",
+  "tintColor": "4AA3FF",
+  "apps": [
+    {
+      "name": "Meu Player",
+      "bundleIdentifier": "com.meuplayer.app",
+      "developerName": "agorismo",
+      "subtitle": "Player de áudio com EQ, ReplayGain e capas locais",
+      "localizedDescription": "Player de áudio escrito em Rust: equalizador de 10 bandas, ReplayGain, playlists, capas locais e Last.fm.",
+      "iconURL": "https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/icon.png",
+      "tintColor": "4AA3FF",
+      "screenshotURLs": [],
+      "versions": []
+    }
+  ],
+  "news": []
+}

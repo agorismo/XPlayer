@@ -1,9 +1,19 @@
 name: Gerar IPA (iOS)
 
 on:
-  workflow_dispatch: {}
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão (vazio = a do Cargo.toml)"
+        required: false
+        default: ""
+      notes:
+        description: "Notas da versão (aparecem no AltStore)"
+        required: false
+        default: "Atualização do Meu Player."
+
+permissions:
+  contents: write
 
 jobs:
   ipa:
@@ -17,14 +27,32 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Definir versão
+        id: v
+        env:
+          VER_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          VER="$VER_INPUT"
+          if [ -z "$VER" ]; then
+            VER=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
       - name: Compilar (release, iPhone/iPad)
         run: cargo build --release --target aarch64-apple-ios
 
       - name: Montar o .ipa (sem assinatura)
         run: |
           rm -rf build && mkdir -p build/Payload/MeuPlayer.app
-          cp target/aarch64-apple-ios/release/meu-player build/Payload/MeuPlayer.app/MeuPlayer
-          cp ios/Info.plist build/Payload/MeuPlayer.app/Info.plist
+          APP=build/Payload/MeuPlayer.app
+          cp target/aarch64-apple-ios/release/meu-player "$APP/MeuPlayer"
+          cp ios/Info.plist "$APP/Info.plist"
+          cp ios/icons/*.png "$APP/"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString ${{ steps.v.outputs.version }}" \
+            -c "Set :CFBundleVersion ${{ steps.v.outputs.build }}" \
+            "$APP/Info.plist"
           (cd build && zip -qry ../MeuPlayer.ipa Payload)
           ls -la MeuPlayer.ipa
 
@@ -32,3 +60,31 @@ jobs:
         with:
           name: MeuPlayer-ipa
           path: MeuPlayer.ipa
+
+      - name: Publicar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ github.event.inputs.notes }}
+        run: |
+          TAG="v${{ steps.v.outputs.version }}-b${{ steps.v.outputs.build }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release create "$TAG" MeuPlayer.ipa \
+            --target "${{ github.sha }}" \
+            --title "Meu Player ${{ steps.v.outputs.version }}" \
+            --notes "${NOTES:-Atualização do Meu Player.}"
+
+      - name: Atualizar a fonte do AltStore/SideStore
+        env:
+          NOTES: ${{ github.event.inputs.notes }}
+        run: |
+          SIZE=$(stat -f%z MeuPlayer.ipa)
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/MeuPlayer.ipa"
+          python3 altstore/update_source.py altstore/apps.json \
+            "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.build }}" "$SIZE" "$URL" \
+            "${NOTES:-Atualização do Meu Player.}"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add altstore/apps.json
+          git commit -m "AltStore: versão ${{ steps.v.outputs.version }} (build ${{ steps.v.outputs.build }})"
+          git pull --rebase origin main
+          git push origin HEAD:main

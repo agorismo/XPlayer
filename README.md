@@ -63,3 +63,15 @@ O app também compila para iPhone/iPad (mesma base de código; layout se adapta 
 - Áudio continua com a tela bloqueada, mas **a troca automática para a próxima faixa em segundo plano pode não funcionar** (a interface é pausada pelo iOS); sem controles na tela de bloqueio ainda.
 - Sem ícone próprio; margens do notch vêm de uma pequena ponte Objective-C (`ios/platform.m`).
 - Caminhos de arquivos mudam a cada reinstalação; o app tenta reencontrar os arquivos dentro da pasta do app.
+
+## Atualizações automáticas (AltStore / SideStore)
+O workflow **Gerar IPA (iOS)** agora também publica um *Release* com o `.ipa` e atualiza a fonte `altstore/apps.json`.
+O repositório precisa ser **público** (o AltStore baixa o `.ipa` sem login).
+
+**Fonte para adicionar no AltStore/SideStore** (Browse → Sources → +):
+
+    https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/apps.json
+
+Ou abra no iPhone: `altstore://source?url=https://raw.githubusercontent.com/agorismo/meu-player/main/altstore/apps.json`
+
+**Publicar uma versão nova:** suba as mudanças, depois Actions → Gerar IPA (iOS) → Run workflow (opcional: informe versão e notas). Quando terminar, o AltStore/SideStore mostra a atualização e o app é reinstalado por lá. Aumente `version` no `Cargo.toml` quando quiser um número novo (o *build* sobe sozinho a cada execução).
