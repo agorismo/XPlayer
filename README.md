@@ -1,4 +1,4 @@
-# Meu Player (Rust) — desktop + iOS
+# XPlayer (Rust) — desktop + iOS
 
 Player de áudio estilo foobar2000, reescrito em Rust (egui + symphonia + cpal), com sistema de plugins.
 Usa a mesma pasta de dados da versão Electron (`%APPDATA%\meu-player`), então `session.json` e `config.json` antigos (playlists, EQ, plugins) continuam valendo.
