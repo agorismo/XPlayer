@@ -16,7 +16,7 @@ fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Meu Player")
+            .with_title("XPlayer")
             .with_inner_size([1100.0, 700.0])
             .with_min_inner_size([760.0, 460.0])
             .with_drag_and_drop(true),
